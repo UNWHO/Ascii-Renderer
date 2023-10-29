@@ -1,19 +1,12 @@
-use ascii_renderer::{Camera, Color, Fragment, FrameBuffer, Model, Triangle, Vertex};
-use cgmath::{frustum, Deg, Matrix4, Perspective, Point3, SquareMatrix, Vector3, Vector4};
-use std::{io::stdout, thread, time::Duration};
+use ascii_renderer::{Camera, Color, Fragment, FrameBuffer, Model, Triangle};
+use cgmath::{frustum, Matrix4, Perspective, Point3, Vector3, Vector4};
+use std::{io::stdout, time::Instant};
 
-const WIDTH: usize = 256;
-const HEIGHT: usize = 256;
+const WIDTH: usize = 128;
+const HEIGHT: usize = 128;
 
 fn main() {
-    let triangle = Triangle::new([
-        Vertex::new(Point3::new(0.0, 0.5, 0.0), Color::new(255, 0, 0)),
-        Vertex::new(Point3::new(-0.5, -0.5, 0.0), Color::new(0, 255, 0)),
-        Vertex::new(Point3::new(0.5, -0.5, 0.0), Color::new(0, 0, 255)),
-    ]);
-
-    let mut model = Model::new();
-    model.add_polygon(triangle);
+    let mut model = Model::triangle();
 
     let mut camera = Camera::new();
     camera
@@ -41,41 +34,47 @@ fn main() {
     );
 
     let mut stdout = stdout();
+    let mut fragments: Vec<Fragment> = vec![];
     let mut frame_buffer = FrameBuffer::new(WIDTH, HEIGHT, &mut stdout);
-    // let mut frame_buffer = [[' '; WIDTH]; HEIGHT];
+    let mut primitives: Vec<Triangle> = vec![];
 
+    let mut time = Instant::now();
     loop {
         frame_buffer.clear();
 
-        model.rotate(Vector3::new(0.0, 0.0, 1.0));
+        model.rotate(Vector3::new(
+            0.0,
+            time.elapsed().as_millis() as f64 / 10.0,
+            0.0,
+        ));
+        time = Instant::now();
 
-        let model_matrix: Matrix4<f64> = Matrix4::identity()
-            * Matrix4::from_translation(model.pos)
-            * Matrix4::from_angle_x(Deg { 0: model.rot.x })
-            * Matrix4::from_angle_y(Deg { 0: model.rot.y })
-            * Matrix4::from_angle_z(Deg { 0: model.rot.z })
-            * Matrix4::from_nonuniform_scale(model.scale.x, model.scale.y, model.scale.z);
-        let mvp_matrix = proj_matrix * view_matrix * model_matrix;
+        let mvp_matrix = proj_matrix * view_matrix * model.model_matrix();
 
-        model
-            .polycons
+        primitives.clear();
+        fragments.clear();
+
+        primitives.append(&mut model.polygons().to_vec());
+
+        primitives
             .iter_mut()
-            .map(|polygon| vertex_shader(polygon.clone(), &mvp_matrix))
-            .map(|primitive| rasterizer(primitive))
-            .flatten()
-            .for_each(|mut fragment| {
-                fragment_shader(&mut fragment);
+            .map(|polygon| vertex_shader(polygon, &mvp_matrix))
+            .for_each(|primitive| rasterizer(primitive, &mut fragments));
 
-                frame_buffer.set_pixel(fragment.x, fragment.y, fragment.color);
-            });
+        fragments.iter_mut().for_each(|fragment| {
+            fragment_shader(fragment);
+
+            frame_buffer.set_pixel(*fragment);
+        });
 
         frame_buffer.print().expect("error");
+        println!("{}", time.elapsed().as_millis());
 
-        thread::sleep(Duration::from_millis(100));
+        // thread::sleep(Duration::from_millis(100));
     }
 }
 
-fn vertex_shader<'a>(mut triangle: Triangle, mvp_matrix: &'a Matrix4<f64>) -> Triangle {
+fn vertex_shader<'a>(triangle: &'a mut Triangle, mvp_matrix: &'a Matrix4<f64>) -> &'a mut Triangle {
     for vertex in &mut triangle.vertices {
         let v = Vector4::new(vertex.pos.x, vertex.pos.y, vertex.pos.z, 1.0);
         let clip_space = mvp_matrix * v; // to clip space
@@ -86,7 +85,7 @@ fn vertex_shader<'a>(mut triangle: Triangle, mvp_matrix: &'a Matrix4<f64>) -> Tr
     triangle
 }
 
-fn rasterizer(mut triangle: Triangle) -> Vec<Fragment> {
+fn rasterizer(triangle: &mut Triangle, fragments: &mut Vec<Fragment>) {
     // viewport transform
     for vertex in &mut triangle.vertices {
         vertex.pos.x = ((vertex.pos.x + 1.0) / 2.0) * (WIDTH as f64);
@@ -94,50 +93,37 @@ fn rasterizer(mut triangle: Triangle) -> Vec<Fragment> {
         vertex.pos.z = (vertex.pos.z + 1.0) / 2.0;
     }
 
-    let mut fragments: Vec<Fragment> = Vec::new();
     for i in 0..HEIGHT {
         for j in 0..WIDTH {
-            let x = j as f64 + 0.5;
-            let y = i as f64 + 0.5;
+            let p = &Point3::new(j as f64 + 0.5, i as f64 + 0.5, 0.0);
 
-            let mut inside = true;
-            inside = inside
-                && edge(
-                    &Point3::new(x, y, 0.0),
-                    &triangle.vertices[0].pos,
-                    &triangle.vertices[1].pos,
-                );
-            inside = inside
-                && edge(
-                    &Point3::new(x, y, 0.0),
-                    &triangle.vertices[1].pos,
-                    &triangle.vertices[2].pos,
-                );
-            inside = inside
-                && edge(
-                    &Point3::new(x, y, 0.0),
-                    &triangle.vertices[2].pos,
-                    &triangle.vertices[0].pos,
-                );
-            if inside == false {
-                continue;
+            let v0 = &triangle.vertices[0];
+            let v1 = &triangle.vertices[1];
+            let v2 = &triangle.vertices[2];
+
+            let area = edge(&v0.pos, &v1.pos, &v2.pos);
+            let mut w0: f64 = edge(&v1.pos, &v2.pos, p);
+            let mut w1 = edge(&v2.pos, &v0.pos, p);
+            let mut w2 = edge(&v0.pos, &v1.pos, p);
+
+            if w0 <= 0.0 && w1 <= 0.0 && w2 <= 0.0 {
+                w0 /= area;
+                w1 /= area;
+                w2 /= area;
+
+                fragments.push(Fragment {
+                    color: Color::round(v0.color * w0 + v1.color * w1 + v2.color * w2),
+                    x: j,
+                    y: i,
+                    z: 0.5,
+                })
             }
-
-            fragments.push(Fragment {
-                color: Color::white(),
-                x: j,
-                y: i,
-                z: 0.5,
-            })
         }
     }
-    fragments
 }
 
-fn edge(p: &Point3<f64>, a: &Point3<f64>, b: &Point3<f64>) -> bool {
-    let value = (a.x - b.x) * (p.y - a.y) - (a.y - b.y) * (p.x - a.x);
-
-    value <= 0.0
+fn edge(a: &Point3<f64>, b: &Point3<f64>, c: &Point3<f64>) -> f64 {
+    (c.x - a.x) * (b.y - a.y) - (c.y - a.y) * (b.x - a.x)
 }
 
 fn fragment_shader(fragment: &mut Fragment) -> &mut Fragment {

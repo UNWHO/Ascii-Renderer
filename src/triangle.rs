@@ -1,4 +1,5 @@
-use crate::Vertex;
+use crate::{Color, Vertex};
+use cgmath::Point3;
 
 #[derive(Debug)]
 pub struct Triangle {
@@ -10,7 +11,29 @@ impl Triangle {
         Triangle { vertices: points }
     }
 
-    pub fn clone(&self) -> Self {
+    pub fn default() -> Self {
+        Triangle {
+            vertices: [
+                Vertex::new(Point3::new(0.0, 0.5, 0.0), Color::new(255, 0, 0)),
+                Vertex::new(Point3::new(-0.5, -0.5, 0.0), Color::new(0, 255, 0)),
+                Vertex::new(Point3::new(0.5, -0.5, 0.0), Color::new(0, 0, 255)),
+            ],
+        }
+    }
+
+    pub fn reverse() -> Self {
+        Triangle {
+            vertices: [
+                Vertex::new(Point3::new(0.5, -0.5, 0.0), Color::new(0, 0, 255)),
+                Vertex::new(Point3::new(-0.5, -0.5, 0.0), Color::new(0, 255, 0)),
+                Vertex::new(Point3::new(0.0, 0.5, 0.0), Color::new(255, 0, 0)),
+            ],
+        }
+    }
+}
+
+impl Clone for Triangle {
+    fn clone(&self) -> Self {
         Triangle {
             vertices: [
                 Vertex::clone(&self.vertices[0]),
