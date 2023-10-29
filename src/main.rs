@@ -1,7 +1,6 @@
-use std::{thread, time::Duration};
-
-use ascii_renderer::{Camera, Color, Fragment, Model, Triangle, Vertex};
+use ascii_renderer::{Camera, Color, Fragment, FrameBuffer, Model, Triangle, Vertex};
 use cgmath::{frustum, Deg, Matrix4, Perspective, Point3, SquareMatrix, Vector3, Vector4};
+use std::{io::stdout, thread, time::Duration};
 
 const WIDTH: usize = 256;
 const HEIGHT: usize = 256;
@@ -41,14 +40,12 @@ fn main() {
         perspective.far,
     );
 
-    let mut frame_buffer = [[' '; WIDTH]; HEIGHT];
+    let mut stdout = stdout();
+    let mut frame_buffer = FrameBuffer::new(WIDTH, HEIGHT, &mut stdout);
+    // let mut frame_buffer = [[' '; WIDTH]; HEIGHT];
 
     loop {
-        for i in 0..HEIGHT {
-            for j in 0..WIDTH {
-                frame_buffer[i][j] = ' ';
-            }
-        }
+        frame_buffer.clear();
 
         model.rotate(Vector3::new(0.0, 0.0, 1.0));
 
@@ -69,18 +66,12 @@ fn main() {
             .for_each(|mut fragment| {
                 fragment_shader(&mut fragment);
 
-                frame_buffer[fragment.y as usize][fragment.x as usize] = '*';
+                frame_buffer.set_pixel(fragment.x, fragment.y, fragment.color);
             });
 
-        // print!("{esc}[2J{esc}[1;1H", esc = 27 as char);
-        print!("\x1B[2J\x1B[1;1H");
-        for i in 0..HEIGHT {
-            for j in 0..WIDTH {
-                print!("{}", frame_buffer[i][j]);
-            }
-            println!();
-        }
-        thread::sleep(Duration::from_millis(10));
+        frame_buffer.print().expect("error");
+
+        thread::sleep(Duration::from_millis(100));
     }
 }
 
@@ -134,8 +125,8 @@ fn rasterizer(mut triangle: Triangle) -> Vec<Fragment> {
 
             fragments.push(Fragment {
                 color: Color::white(),
-                x: j as i32,
-                y: i as i32,
+                x: j,
+                y: i,
                 z: 0.5,
             })
         }
